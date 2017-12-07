@@ -1,0 +1,232 @@
+---
+title: "Challenge B"
+author: "Greta FAVARO Garance MASBOU TD1"
+output:  html_document
+---
+
+Github repository : https://github.com/Greta33/Challenge-B
+
+[Be careful : for the Task3B, step 1, you have to write your own path to the CNIL data frame before running the knit.]
+
+##TASK 1B
+
+First we import the data frame and call it "train".
+```{r data frame, include=FALSE}
+train <- read.table(file=file.choose(), header=TRUE, sep=",", dec=".")
+attach(train)
+```
+
+
+####Step 1
+We choose the random forest method.
+Random forest will allow us to find the links between the target variables and the explanatory variables. It is a machine learning algoritsm. Random Forest will classify the explanatory variables according to their links with the variable to be explained.
+
+
+####Step 2
+```{r usefull packages, include=FALSE}
+library("randomForest")
+library(dplyr)
+```
+
+```{r remove the column with the ID, include=FALSE}
+train2 <- train[,c(2:81)]
+```
+
+After installing the package "randomForest" and remove the column "ID", we can training the data.
+```{r random forest method}
+set.seed(123)
+model_MLE <- randomForest(SalePrice ~., data=train2,na.action = na.roughfix)
+model_MLE_prediction_train <- predict (model_MLE, data=train2)
+```
+
+
+####Step 3
+Now, we can compare the predictions of the random forest model with the ones of an OLS model on the "test" data.
+```{r import the data "test", include=FALSE}
+test <- read.table(file=file.choose(), header=TRUE, sep=",", dec=".")
+attach(test)
+test2 <- test[c(2:80)]
+```
+
+The MLE model : 
+``` {r mle}
+model_MLE_prediction_test <- predict (model_MLE, data=test2)
+head(model_MLE_prediction_test)
+```
+
+The OLS model : 
+```{r ols}
+model_OLS <- lm(SalePrice ~ MSZoning + LotArea + Neighborhood  + YearBuilt + OverallQual, data = train2)
+model_OLS_prediction_test <- predict(model_OLS, data=test2)
+head(model_OLS_prediction_test)
+```
+
+##Task 2B
+
+```{r, include=FALSE}
+library(tidyverse)
+library(np)
+library(caret)
+
+set.seed(1)
+Nsim <- 150
+b <- c(0,1)
+x0 <- rep(1, Nsim)
+x1 <- rnorm(n = Nsim)
+
+X <- cbind(x0, x1^3)
+y.true <- X %*% b
+
+eps <- rnorm(n = Nsim)
+y <- X %*% b + eps
+
+df <- tbl_df(y[,1]) %>% rename(y = value) %>% bind_cols(tbl_df(x1)) %>% rename(x = value) %>% bind_cols(tbl_df(y.true[,1])) %>% rename(y.true = value)
+
+
+
+training.index <- createDataPartition(y = y, times = 1, p = 0.8) 
+df <- df %>% mutate(which.data = ifelse(1:n() %in% training.index$Resample1, "training", "test")) 
+
+training <- df %>% filter(which.data == "training") 
+test <- df %>% filter(which.data == "test")
+```
+
+
+####Step  1
+We estimate the low-flexibility local linear model on the training data.
+```{r}
+ll.fit.lowflex <- npreg(y ~ x, data = training, method = "ll", bws = 0.5)
+summary(ll.fit.lowflex)
+```
+
+####Step 2
+We estimate the high-flexibility local linear model on the training data.
+```{r}
+ll.fit.highflex <- npreg(y ~ x, data = training, method = "ll", bws = 0.01)
+summary(ll.fit.highflex)
+```
+
+####Step 3
+We plot the prediction of these two models.
+```{r, fig.align='center'}
+df <- df %>% mutate(y.ll.lowflex = predict(object = ll.fit.lowflex, newdata = df), y.ll.highflex = predict(object = ll.fit.highflex, newdata = df))
+training <- training %>% mutate(y.ll.lowflex = predict(object = ll.fit.lowflex, newdata = training), y.ll.highflex = predict(object = ll.fit.highflex, newdata = training))
+
+ggplot(training) + geom_point(mapping = aes(x = x, y = y)) + 
+  geom_line(mapping = aes(x = x, y = y.true)) + 
+  geom_line(mapping = aes(x = x, y = y.ll.lowflex), color = "red") + 
+  geom_line(mapping = aes(x = x, y = y.ll.highflex), color = "blue")
+```
+
+####Step 4
+The high-flexibility local linear model (blue line) has more variable predictions compared to the low-flexibility local linear model (red line). So we think that the bias of the high-flexibility local linear model should be lower that the one of the low-flexibility local linear model.
+
+
+####Step 5
+Now we do the same on the test data:
+```{r, fig.align='center'}
+ll.fit.lowflex2 <- npreg(y ~ x, data = test, method = "ll", bws = 0.5)
+summary(ll.fit.lowflex2)
+
+ll.fit.highflex2 <- npreg(y ~ x, data = test, method = "ll", bws = 0.01)
+summary(ll.fit.highflex2)
+
+df <- df %>% mutate(y.ll.lowflex2 = predict(object = ll.fit.lowflex2, newdata = df), y.ll.highflex2 = predict(object = ll.fit.highflex2, newdata = df))
+test <- test %>% mutate(y.ll.lowflex2 = predict(object = ll.fit.lowflex2, newdata = test), y.ll.highflex2 = predict(object = ll.fit.highflex2, newdata = test))
+
+ggplot(test) + geom_point(mapping = aes(x = x, y = y)) + 
+  geom_line(mapping = aes(x = x, y = y.true)) + 
+  geom_line(mapping = aes(x = x, y = y.ll.lowflex2), color = "red") + 
+  geom_line(mapping = aes(x = x, y = y.ll.highflex2), color = "blue")
+```
+
+We find the same effect that in the previous question about the predictions and the bias.
+
+
+####Step 6
+We create vector of several bandwidth.
+```{r}
+bw <- seq(0.01, 0.5, by = 0.001)
+```
+
+####Step 7
+We train local linear model y ~ x on training with each bandwidth.
+```{r}
+llbw.fit <- lapply(X = bw, FUN = function(bw) {npreg(y ~ x, data = training, method = "ll", bws = bw)})
+```
+
+####Step 8
+We compute for each bandwidth the MSE-training.
+```{r}
+mse.training <- function(fit.model){
+  predictions <- predict(object = fit.model, newdata = training)
+  training %>% mutate(squared.error = (y - predictions)^2) %>% summarize(mse = mean(squared.error))
+}
+mse.train.results <- unlist(lapply(X = llbw.fit, FUN = mse.training))
+```
+
+####Step 9
+We compute for each bandwidth the MSE-test.
+```{r}
+mse.test <- function(fit.model){
+  predictions <- predict(object = fit.model, newdata = test)
+  test %>% mutate(squared.error = (y - predictions)^2) %>% summarize(mse = mean(squared.error))
+}
+mse.test.results <- unlist(lapply(X = llbw.fit, FUN = mse.test))
+```
+
+####Step 10
+We plot the MSE-training and the MSE-test.
+```{r, fig.align='center'}
+mse.df <- tbl_df(data.frame(bandwidth = bw, mse.train = mse.train.results, mse.test = mse.test.results))
+
+ggplot(mse.df) + 
+  geom_line(mapping = aes(x = bandwidth, y = mse.train), color = "blue") +
+  geom_line(mapping = aes(x = bandwidth, y = mse.test), color = "orange")
+```
+
+When the bandwith is higher than 0,1 then the two MSE seem have the same bahaviour: they are increasing. Whereas, when the bandwith tends to 0, the MSE-test (orange line) tends to plus infinity while the MSE-training (blue line) tends to minus infinity. 
+With these predictions we want to minimize the square error terms of our regression. So since MSE is the mean square error, the choice of the data will depend on the choice of the better bandwidth.
+
+## TASK 3B
+
+```{r installation of usefull packages, include=FALSE}
+library(readxl)
+library(tidyverse)
+library(stringr)
+library(bindrcpp)
+```
+
+####Step 1
+We just import the data frame and call it "cnil".
+```{r Step 1, importation of the data frame "cnil", include=FALSE}
+cnil <- read_excel("//rohan/Q/21404850/Documents/ChallengeB/OpenCNIL_Organismes_avec_CIL_VD_20171115.xlsx")
+attach(cnil)
+View(cnil)
+```
+
+
+####Step 2
+First, we have to clean the data frame "cnil".
+```{r Cleaning of the data frame}
+remove.na <- cnil %>% summarise_all(.funs = funs(sum(is.na(.)))) %>% gather(key = "feature", value = "missing.observations") %>% filter(missing.observations > 100) %>% select(feature) %>% unlist
+cnil <- cnil %>% select(- one_of(remove.na))
+cnil <- cnil %>% filter(is.na(Adresse) == FALSE, is.na(`Code Postal`) == FALSE, is.na(Ville) == FALSE)
+cnil <- data.frame(cnil)
+```
+
+Now, we just cut the variables.
+```{r Make variables more readable}
+dept <- str_sub(`Code Postal`, start=1, end=2)
+dept <- as.numeric(dept)
+cnil2 <- data.frame(Responsable,dept)
+
+```
+
+Finally, we can create our final data frame.
+```{r Final data frame}
+Final_table <- table(dept)
+Final_table <- data.frame(Final_table)
+colnames(Final_table) <- c("Department", "Organizations")
+head(Final_table)
+```
